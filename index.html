@@ -2941,11 +2941,13 @@
 
     /* 아직 안 낸 곳 — 그룹 필터와 상관없이 그 주 전체를 모은다.
        '카톡용 복사'는 단톡방에 그대로 붙일 수 있는 글로 만든다.
-       특별예배는 집회가 있는 주에만 내므로 뺀다 — 매주 '안 냄'으로 뜨면 혼란스럽다. */
+       특별예배는 집회가 있는 주에만 내므로 뺀다 — 매주 '안 냄'으로 뜨면 혼란스럽다.
+       교구(다락방·순장반)도 뺀다. 교구는 별도 「교구 출석 현황표」로 들어와서
+       이 앱의 제출 기록에는 안 잡힌다 — 대시보드 '입력 현황'에서 본다. */
     function missingByGroup(weekKey) {
         const st = submissionStatus[weekKey] || {};
         const out = [];
-        ['sunday', 'weekday', 'cell', 'leaderTue', 'leaderJob', 'youth', 'newfam'].forEach(key => {
+        ['sunday', 'weekday', 'youth', 'newfam'].forEach(key => {
             const group = DEPARTMENTS[key];
             if (!group) return;
             const miss = group.items.map(i => i.name || i)
@@ -2975,7 +2977,7 @@
         box.className = 'missing-box';
         box.innerHTML = `
             <div class="missing-hd">
-                <h3>아직 안 낸 곳 ${total}곳 <small style="font-weight:500;font-size:11.5px">· 특별예배 제외</small></h3>
+                <h3>아직 안 낸 곳 ${total}곳 <small style="font-weight:500;font-size:11.5px">· 특별예배·교구 제외 (교구는 대시보드에서)</small></h3>
                 <button class="missing-copy" onclick="copyMissingSummary()">카톡용 복사</button>
             </div>
             ${groups.map(g => `<div class="missing-row"><b>${g.label}</b><span>${
