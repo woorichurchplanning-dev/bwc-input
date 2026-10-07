@@ -5583,7 +5583,9 @@
         if (!nums.length) return null;
         const total = nums.find(([k]) => isTotalKey(k));
         if (total) return Number(total[1]) || 0;
-        return nums.reduce((a, [, v]) => a + (Number(v) || 0), 0);
+        // '계'는 사람 수다. 헌금(원)을 같이 더하면 사랑부 230,059처럼 뜻 없는 값이 된다
+        return nums.filter(([k]) => !String(k).includes('헌금'))
+            .reduce((a, [, v]) => a + (Number(v) || 0), 0);
     }
     const adminRec = (wk, groupKey, name) => submissionStatus[wk]?.[`${wk}:${groupKey}:${name}`];
 
