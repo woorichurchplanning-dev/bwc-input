@@ -2315,6 +2315,8 @@
           desc: '성탄 예배 · 부별로 입력' },
     ];
     const SPECIAL_PLACES = ['송림', '서현'];
+    /* 온라인 실시간 접속 — 현장(송림·서현)과 따로 센다. 시트에는 '{요일}|1부|온라인|실시간 접속' */
+    const SPECIAL_ONLINE = '온라인', SPECIAL_ONLINE_ROW = '실시간 접속';
 
     const DEPARTMENTS = {
         sunday: {
@@ -3927,9 +3929,26 @@
             </div>`;
         }).join('') + `
         <div class="form-card">
-            <div class="form-card-title">전체 합계</div>
+            <div class="form-card-title">온라인 <span style="font-weight:500;font-size:12px;color:var(--color-text-tertiary)">실시간 접속 수 · 현장 합계에는 넣지 않습니다</span></div>
+            <div class="grid-scroll">
+                <table class="grid-table">
+                    <thead><tr><th class="grid-sticky">구분</th>${meeting.cols.map(c => `<th>${c}</th>`).join('')}<th class="grid-sum">계</th></tr></thead>
+                    <tbody><tr>
+                        <th class="grid-sticky">${SPECIAL_ONLINE_ROW}</th>
+                        ${meeting.cols.map(c => `
+                        <td><input type="number" inputmode="numeric" min="0" class="sp-input"
+                                   data-place="${SPECIAL_ONLINE}" data-room="${SPECIAL_ONLINE_ROW}" data-col="${c}"
+                                   data-key="${specialKey(meeting, c, SPECIAL_ONLINE, SPECIAL_ONLINE_ROW)}"
+                                   oninput="updateSpecialTotals()" placeholder="·"></td>`).join('')}
+                        <td class="grid-sum grid-total" data-spplace="${SPECIAL_ONLINE}">0</td>
+                    </tr></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="form-card">
+            <div class="form-card-title">현장 합계</div>
             <div style="font-size:26px;font-weight:800;color:var(--color-accent);font-variant-numeric:tabular-nums" id="sp-grand">0</div>
-            <div class="grid-hint">송림 + 서현 · 빈 칸은 0으로 저장됩니다.</div>
+            <div class="grid-hint">송림 + 서현 (온라인 제외) · 빈 칸은 0으로 저장됩니다.</div>
         </div>`;
 
         document.querySelectorAll('.sp-input').forEach(inp => {
@@ -3954,7 +3973,7 @@
             rowSum[`${place}|${room}`] = (rowSum[`${place}|${room}`] || 0) + n;
             colSum[`${place}|${col}`] = (colSum[`${place}|${col}`] || 0) + n;
             placeSum[place] = (placeSum[place] || 0) + n;
-            grand += n;
+            if (place !== SPECIAL_ONLINE) grand += n;   // 현장 합계 — 온라인은 따로
         });
         document.querySelectorAll('[data-sprow]').forEach(td => td.textContent = (rowSum[td.dataset.sprow] || 0).toLocaleString());
         document.querySelectorAll('[data-spcol]').forEach(td => td.textContent = (colSum[td.dataset.spcol] || 0).toLocaleString());
@@ -4002,6 +4021,8 @@
             formData[inp.dataset.key] = n;
             grand += n;
         });
+        const online = [...document.querySelectorAll('.sp-input')]
+            .filter(i => i.dataset.place === SPECIAL_ONLINE).reduce((a, i) => a + (parseInt(i.value) || 0), 0);
         if (grand === 0) {
             alertArea.innerHTML = `<div style="padding:var(--s3) var(--s4);background:var(--color-negative-bg);border:1px solid rgba(192,18,60,0.2);border-radius:var(--r);color:var(--color-negative);font-size:13px">⚠️ 최소 한 곳 이상 입력해주세요</div>`;
             return;
@@ -4019,7 +4040,7 @@
             if (!res.ok || !data.success) throw new Error(data.message || '저장 실패');
             markSubmitted('special', meeting.name, 'sunday', formData, weekKey,
                           { submittedAt: data.savedAt || new Date().toISOString(), fromSheet: true });
-            alertArea.innerHTML = `<div style="padding:var(--s3) var(--s4);background:var(--color-positive-bg);border:1px solid rgba(9,130,93,0.2);border-radius:var(--r);color:var(--color-positive);font-size:13px">✓ ${meeting.name} 저장 완료 · 총 ${grand.toLocaleString()}명</div>`;
+            alertArea.innerHTML = `<div style="padding:var(--s3) var(--s4);background:var(--color-positive-bg);border:1px solid rgba(9,130,93,0.2);border-radius:var(--r);color:var(--color-positive);font-size:13px">✓ ${meeting.name} 저장 완료 · 현장 ${(grand - online).toLocaleString()}명${online ? ` · 온라인 ${online.toLocaleString()}` : ''}</div>`;
             setTimeout(() => goSpecialSelect(), 1200);
         } catch (e) {
             alertArea.innerHTML = `<div style="padding:var(--s3) var(--s4);background:var(--color-negative-bg);border:1px solid rgba(192,18,60,0.2);border-radius:var(--r);color:var(--color-negative);font-size:13px">저장 실패 — ${e.message}</div>`;
