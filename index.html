@@ -1768,6 +1768,13 @@
       font-size:11px; cursor:pointer; padding:0 2px; }
     .loc-del:hover { color:var(--color-negative); }
     .fh-card { margin-top:16px; padding-top:14px; border-top:1px solid var(--color-border-default); }
+    .ev-card { display:block !important; margin-top:16px; padding-top:14px; border-top:1px solid var(--color-border-default); }
+    .ev-tags { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:8px; }
+    .ev-tag { padding:6px 12px; border-radius:16px; border:1.5px solid var(--color-border-strong); background:#fff;
+              font:inherit; font-size:13px; color:var(--color-text-secondary); cursor:pointer; }
+    .ev-tag.on { border-color:var(--color-accent, #635bff); background:var(--color-accent, #635bff); color:#fff; font-weight:700; }
+    .ev-other { width:130px; padding:6px 10px; border:1.5px solid var(--color-border-strong); border-radius:16px; font:inherit; font-size:12.5px; }
+    .ev-memo { width:100%; padding:8px 12px; border:1.5px solid var(--color-border-strong); border-radius:var(--r); font:inherit; font-size:13px; }
     .fh-title { font-size:12.5px; font-weight:700; color:var(--color-text-secondary); margin-bottom:8px; }
     .fh-title span { font-weight:400; font-size:11px; color:var(--color-text-tertiary); margin-left:6px; }
     .fh-input { width:66px; padding:7px 4px; font-size:13px; font-family:inherit; text-align:center;
@@ -4079,6 +4086,11 @@
 
     let worshipCtx = null;
 
+    /* 이 주일의 행사 — 성찬식·세례식은 따로 세지 않고, 그 주일 출석에 태그와 메모만 붙인다.
+       시트에는 '행사'(쉼표로 이은 이름)와 '행사 메모' 칸으로 들어간다. 대시보드 특별예배/행사 탭이 모아 본다. */
+    const SUNDAY_EVENT_TAGS = ['성찬식', '세례식'];
+    const EV_KEY = '행사', EV_MEMO_KEY = '행사 메모';
+
     const worshipKey = (part, loc) => `${part}|${loc}`;
     const fullHouseKey = (part, where) => `${part}|만석 ${where}`;
 
@@ -4150,6 +4162,7 @@
         setTimeout(() => ensureItemValues(formWeekSelect.value, 'sunday', itemName, () => {
             if (worshipCtx?.itemName !== itemName) return;   // 그 사이 다른 데로 갔으면 그만둔다
             worshipCtx.extras = savedExtraLocations(itemName, formWeekSelect.value);
+            worshipCtx.ev = null;
             renderWorshipGrid();
         }), 0);
 
@@ -4164,6 +4177,7 @@
             renderWorshipGrid();
             ensureItemValues(formWeekSelect.value, 'sunday', worshipCtx.itemName, () => {
                 worshipCtx.extras = savedExtraLocations(worshipCtx.itemName, formWeekSelect.value);
+                worshipCtx.ev = null;
                 renderWorshipGrid();
             });
         };
@@ -4238,6 +4252,15 @@
                 </div>
             </div>` : ''}
 
+            <div class="ev-card">
+                <div class="fh-title">이 주일의 행사 <span>해당할 때만 고르세요 · 인원은 위 출석 그대로 씁니다</span></div>
+                <div class="ev-tags">
+                    ${SUNDAY_EVENT_TAGS.map(t => `<button type="button" class="ev-tag" data-tag="${t}" onclick="toggleSundayEvent(this)">${t}</button>`).join('')}
+                    <input type="text" id="ev-other" class="ev-other" placeholder="다른 행사 (예: 임직식)" oninput="worshipCtx.ev.other = this.value">
+                </div>
+                <input type="text" id="ev-memo" class="ev-memo" placeholder="메모 (예: 성찬 참여 약 3,000명 · 세례 24명)" oninput="worshipCtx.ev.memo = this.value">
+            </div>
+
             <div class="grid-hint">빈 칸은 0으로 저장됩니다. 부별 합계는 자동으로 계산되어 기존 '1부·2부·3부·총계'로도 함께 저장됩니다.</div>
         </div>`;
 
@@ -4248,11 +4271,28 @@
             const empty = v === undefined || v === null || v === '';
             inp.value = empty ? '' : (inp.classList.contains('fh-input') ? toHM(v) : v);
         });
+        // 행사 태그 — 주를 바꾸거나 저장값이 새로 오면 시트 값으로, 장소 추가·빼기로 다시 그릴 때는 고르던 그대로
+        if (!worshipCtx.ev || worshipCtx.ev.week !== weekKey) {
+            const tags = String(saved[EV_KEY] ?? '').split(',').map(t => t.trim()).filter(Boolean);
+            worshipCtx.ev = { week: weekKey, had: tags.length > 0 || !!String(saved[EV_MEMO_KEY] ?? '').trim(),
+                              tags: tags.filter(t => SUNDAY_EVENT_TAGS.includes(t)),
+                              other: tags.filter(t => !SUNDAY_EVENT_TAGS.includes(t)).join(', '),
+                              memo: String(saved[EV_MEMO_KEY] ?? '') };
+        }
+        document.querySelectorAll('.ev-tag').forEach(b => b.classList.toggle('on', worshipCtx.ev.tags.includes(b.dataset.tag)));
+        document.getElementById('ev-other').value = worshipCtx.ev.other;
+        document.getElementById('ev-memo').value = worshipCtx.ev.memo;
         const sel = document.getElementById('loc-add-select');
         if (sel) sel.onchange = () => {
             document.getElementById('loc-add-custom').style.display = sel.value === '__custom' ? '' : 'none';
         };
         updateWorshipTotals();
+    }
+
+    function toggleSundayEvent(btn) {
+        const t = btn.dataset.tag, ev = worshipCtx.ev;
+        ev.tags = ev.tags.includes(t) ? ev.tags.filter(x => x !== t) : [...ev.tags, t];
+        btn.classList.toggle('on', ev.tags.includes(t));
     }
 
     function addWorshipLocation() {
@@ -4323,6 +4363,14 @@
         // 기존 대시보드가 읽는 부별 총계도 함께 저장한다
         WORSHIP_PARTS.forEach(p => { formData[p] = partTotal[p] || 0; });
         formData['총계'] = grand;
+        // 행사 태그 — 고른 것이 있거나, 전에 있던 것을 지울 때만 보낸다(빈 값이 예전 태그를 덮는다)
+        const ev = worshipCtx.ev || { tags: [], other: '', memo: '' };
+        const evTags = [...ev.tags, ...String(ev.other || '').split(',').map(t => t.trim()).filter(Boolean)];
+        const evMemo = String(ev.memo || '').trim();
+        if (evTags.length || evMemo || ev.had) {
+            formData[EV_KEY] = evTags.join(',');
+            formData[EV_MEMO_KEY] = evMemo;
+        }
 
         const btn = document.getElementById('form-submit-btn');
         btn.classList.add('btn-loading'); btn.disabled = true; btn.textContent = '구글시트 저장 중...';
@@ -4342,7 +4390,8 @@
             document.getElementById('screen-done').style.display = 'block';
             document.getElementById('done-dept-name').textContent = `주일예배 ${itemName} 제출 완료`;
             const sub = document.getElementById('done-subtitle');
-            if (sub) sub.textContent = `1부 ${partTotal['1부']||0} · 2부 ${partTotal['2부']||0} · 3부 ${partTotal['3부']||0} · 총 ${grand}명`;
+            if (sub) sub.textContent = `1부 ${partTotal['1부']||0} · 2부 ${partTotal['2부']||0} · 3부 ${partTotal['3부']||0} · 총 ${grand}명` +
+                (evTags.length ? ` · ${evTags.join('·')}` : '');
             const now = new Date();
             document.getElementById('done-time').textContent =
                 `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
