@@ -2346,16 +2346,17 @@
         weekday: {
             label: '주중예배/새벽기도',
             items: [
-                { name: '수요예배', baseDay: -4, fields: [
+                { name: '수요예배', off: 'week', baseDay: -4, fields: [
                     { label: '인원', key: 'count' },
                     { label: '비고', key: 'note', type: 'text' }
                 ]},
-                { name: '금요기도회', baseDay: -2, fields: [
+                { name: '금요기도회', off: 'week', baseDay: -2, fields: [
                     { label: '인원', key: 'count' },
                     { label: '비고', key: 'note', type: 'text' }
                 ]},
                 {
                     name: '새벽기도',
+                    off: 'days',
                     baseDay: 0,
                     fields: [
                         { label: '월', key: 'mon', display: '월 현장' },
@@ -3372,6 +3373,41 @@
         });
 
         fieldsHTML += '</div>';
+
+        if (deptItem.off) {
+            const mine0 = submissionStatus[selectedWeekKey]?.[`${selectedWeekKey}:${groupKey}:${deptName}`]?.data || {};
+            const okey = `${selectedWeekKey}:${deptName}`;
+            if (!offCtx || offCtx.key !== okey || !keep || !offCtx.touched) {   // 치던 중 다시 그릴 때만 고르던 그대로
+                const why = String(mine0['휴회'] ?? '').trim();
+                const days = String(mine0['휴회 요일'] ?? '').split(',').map(x => x.trim()).filter(d => OFF_DAYS.includes(d));
+                offCtx = { key: okey, touched: false, had: !!why, on: !!why,
+                           days: why ? (days.length ? days : (deptItem.off === 'days' ? [...OFF_DAYS] : [])) : [], why };
+            }
+            const isDays = deptItem.off === 'days';
+            const dayDate = i => { const d = new Date(sundayDate); d.setDate(d.getDate() - 6 + i); return `${d.getMonth()+1}/${d.getDate()}`; };
+            fieldsHTML += `
+            <div class="form-card">
+                <div class="form-card-title">휴회</div>
+                <div class="ev-card" style="margin-top:0;padding-top:0;border-top:0">
+                    <div class="ev-tags">
+                        ${isDays
+                            ? `<span class="loc-add-label" style="margin-right:4px">쉰 날</span>` + OFF_DAYS.map((d, i) =>
+                                `<button type="button" class="ev-tag${offCtx.days.includes(d) ? ' on' : ''}" data-day="${d}" onclick="toggleOffDay(this)">${d} <small>${dayDate(i)}</small></button>`).join('') +
+                              `<button type="button" class="ev-tag" onclick="toggleOffDay(null)">월~토 전체</button>`
+                            : `<button type="button" class="ev-tag${offCtx.on ? ' on' : ''}" id="off-toggle" onclick="toggleOffWeek(this)">이번 주 휴회</button>`}
+                    </div>
+                    <div class="ev-tags">
+                        <span class="loc-add-label" style="margin-right:4px">사유</span>
+                        ${OFF_REASONS.map(r => `<button type="button" class="ev-tag" onclick="pickOffReason('${r}')">${r}</button>`).join('')}
+                    </div>
+                    <input type="text" id="off-why" class="ev-memo" placeholder="휴회 사유 (예: 특별새벽부흥회로 대체)"
+                           value="${offCtx.why.replace(/"/g, '&quot;')}" oninput="offCtx.why = this.value; offCtx.touched = true">
+                    <div class="grid-hint">휴회로 표시한 날은 대시보드 그래프에서 빠지고 사유가 메모로 나옵니다. 그날 모인 인원이 있으면 위 칸에 그대로 적어도 됩니다.</div>
+                </div>
+            </div>`;
+        } else {
+            offCtx = null;
+        }
         document.getElementById('form-fields-area').innerHTML = fieldsHTML;
         document.getElementById('form-previous-weeks-area').style.display = 'none';
 
@@ -3390,6 +3426,24 @@
             input.addEventListener('input', updateTotalFields);
         });
         updateTotalFields();
+    }
+
+    function toggleOffWeek(btn) {
+        offCtx.on = !offCtx.on; offCtx.touched = true;
+        btn.classList.toggle('on', offCtx.on);
+    }
+    function toggleOffDay(btn) {
+        offCtx.touched = true;
+        if (!btn) offCtx.days = offCtx.days.length === OFF_DAYS.length ? [] : [...OFF_DAYS];
+        else { const d = btn.dataset.day; offCtx.days = offCtx.days.includes(d) ? offCtx.days.filter(x => x !== d) : [...offCtx.days, d]; }
+        document.querySelectorAll('.ev-tag[data-day]').forEach(b => b.classList.toggle('on', offCtx.days.includes(b.dataset.day)));
+    }
+    function pickOffReason(r) {
+        offCtx.why = r; offCtx.touched = true;
+        document.getElementById('off-why').value = r;
+        // 사유를 고르면 휴회도 켠다 (새벽기도는 쉰 날을 직접 고른다)
+        const t = document.getElementById('off-toggle');
+        if (t && !offCtx.on) { offCtx.on = true; t.classList.add('on'); }
     }
 
     function openSubmittedDept(groupKey, deptItem) {
@@ -3444,6 +3498,9 @@
                     <strong>${val !== '' ? val : '–'}</strong>
                 </div>`;
             });
+            const offWhy = submission.data['휴회'];
+            if (offWhy) html += `<div style="display:flex;justify-content:space-between;padding:var(--s2) 0">
+                    <span>휴회</span><strong>${submission.data['휴회 요일'] ? submission.data['휴회 요일'] + ' · ' : ''}${offWhy}</strong></div>`;
             html += '</div>';
             doneDataArea.innerHTML = html;
         }
@@ -4085,6 +4142,13 @@
     const FULL_HOUSE_ROWS = { '송림': ['본당 1층', '본당 2층'], '서현': [] };
 
     let worshipCtx = null;
+
+    /* 휴회 — 수요예배·금요기도회는 그 주 통째로, 새벽기도는 요일별로.
+       시트에는 '휴회'(사유)와 새벽기도만 '휴회 요일'(월,화,…) 칸으로 들어간다.
+       대시보드는 휴회한 날을 그래프에서 빼고 사유를 메모로 보여 준다(숫자는 메모에 그대로). */
+    const OFF_REASONS = ['특별새벽부흥회', '명절 연휴', '교회 행사'];
+    const OFF_DAYS = ['월', '화', '수', '목', '금', '토'];
+    let offCtx = null;   // { key, touched, on, days:[], why }
 
     /* 이 주일의 행사 — 성찬식·세례식은 따로 세지 않고, 그 주일 출석에 태그와 메모만 붙인다.
        시트에는 '행사'(쉼표로 이은 이름)와 '행사 메모' 칸으로 들어간다. 대시보드 특별예배/행사 탭이 모아 본다. */
@@ -4830,6 +4894,22 @@
             });
         }
 
+        // 휴회 — 켰거나(새벽기도는 쉰 날을 골랐거나), 전에 있던 휴회를 끌 때만 보낸다
+        let offFields = null;
+        if (deptItem.off && offCtx) {
+            const isDays = deptItem.off === 'days';
+            const on = isDays ? offCtx.days.length > 0 : offCtx.on;
+            const why = String(offCtx.why || '').trim();
+            if (on) {
+                offFields = { '휴회': why || '휴회' };
+                if (isDays) offFields['휴회 요일'] = OFF_DAYS.filter(d => offCtx.days.includes(d)).join(',');
+                allEmpty = false;
+            } else if (offCtx.had) {
+                offFields = { '휴회': '' };
+                if (isDays) offFields['휴회 요일'] = '';
+            }
+        }
+
         // 모든 필드가 비어있을 때만 경고
         if (allEmpty) {
             const alertArea = document.getElementById('form-alert-area');
@@ -4873,6 +4953,8 @@
                     formDataKorean[labelMap[key] || key] = value;
                 }
             });
+
+            if (offFields) { Object.assign(formDataKorean, offFields); Object.assign(formData, offFields); }
 
             const gasPayload = {
                 weekKey: selectedWeekKey,
