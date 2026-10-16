@@ -1756,7 +1756,7 @@
     .ev-tag { padding:6px 12px; border-radius:16px; border:1.5px solid var(--color-border-strong); background:#fff;
               font:inherit; font-size:13px; color:var(--color-text-secondary); cursor:pointer; }
     .ev-tag.on { border-color:var(--color-accent, #635bff); background:var(--color-accent, #635bff); color:#fff; font-weight:700; }
-    .ev-other { width:130px; padding:6px 10px; border:1.5px solid var(--color-border-strong); border-radius:16px; font:inherit; font-size:12.5px; }
+    .ev-other { width:170px; padding:6px 10px; border:1.5px solid var(--color-border-strong); border-radius:16px; font:inherit; font-size:12.5px; }
     .ev-memo { width:100%; padding:8px 12px; border:1.5px solid var(--color-border-strong); border-radius:var(--r); font:inherit; font-size:13px; }
     .fh-title { font-size:12.5px; font-weight:700; color:var(--color-text-secondary); margin-bottom:8px; }
     .fh-title span { font-weight:400; font-size:11px; color:var(--color-text-tertiary); margin-left:6px; }
@@ -4135,8 +4135,33 @@
 
     /* 이 주일의 행사 — 성찬식·세례식은 따로 세지 않고, 그 주일 출석에 태그와 메모만 붙인다.
        시트에는 '행사'(쉼표로 이은 이름)와 '행사 메모' 칸으로 들어간다. 대시보드 특별예배/행사 탭이 모아 본다. */
-    const SUNDAY_EVENT_TAGS = ['성찬식', '세례식'];
+    /* 태그는 미리 정하지 않는다. 처음 한 번 직접 써서 저장하면 Apps Script 가 목록에 남기고
+       (?mode=event-tags), 그다음부터 여기와 대시보드에 버튼으로 뜬다.
+       저장은 '주일행사/주일' 줄 하나 — 서현·송림 어느 표에서 고쳐도, 대시보드에서 고쳐도 같은 값이다.
+       예전(10/14~)에는 서현·송림 줄에 '행사' 칸으로 넣었다. 그 값은 '주일행사'가 없을 때만 읽는다. */
+    const SUNDAY_EVENT_DEFAULTS = ['성찬식', '세례식'];
     const EV_KEY = '행사', EV_MEMO_KEY = '행사 메모';
+    let SUN_EV_VOCAB = [...SUNDAY_EVENT_DEFAULTS];
+    let SUN_EV_VOCAB_ASKED = false;
+    const SUN_EV_SAVED = {};   // 주차 → { tags, memo } (주일행사 줄) · null = 그 주는 없음
+
+    function loadSunEvVocab() {
+        if (SUN_EV_VOCAB_ASKED) return;
+        SUN_EV_VOCAB_ASKED = true;
+        fetch(`${GAS_URL}?mode=event-tags`).then(r => r.json()).then(b => {
+            if (!b?.tags?.length) return;
+            b.tags.forEach(t => { if (!SUN_EV_VOCAB.includes(t)) SUN_EV_VOCAB.push(t); });
+            if (document.getElementById('ev-card')) renderEvCard();
+        }).catch(() => {});
+    }
+    async function loadSunEvSaved(weekKey) {
+        if (weekKey in SUN_EV_SAVED) return;
+        const json = await gasGetItem(weekKey, '주일행사', '주일');
+        const r = json?.success ? json.data?.[weekKey]?.['주일행사']?.['주일'] : null;
+        SUN_EV_SAVED[weekKey] = r && (EV_KEY in r || EV_MEMO_KEY in r)
+            ? { tags: String(r[EV_KEY] ?? '').split(',').map(t => t.trim()).filter(Boolean), memo: String(r[EV_MEMO_KEY] ?? '') }
+            : null;
+    }
 
     const worshipKey = (part, loc) => `${part}|${loc}`;
     const fullHouseKey = (part, where) => `${part}|만석 ${where}`;
@@ -4299,14 +4324,7 @@
                 </div>
             </div>` : ''}
 
-            <div class="ev-card">
-                <div class="fh-title">이 주일의 행사 <span>해당할 때만 고르세요 · 인원은 위 출석 그대로 씁니다</span></div>
-                <div class="ev-tags">
-                    ${SUNDAY_EVENT_TAGS.map(t => `<button type="button" class="ev-tag" data-tag="${t}" onclick="toggleSundayEvent(this)">${t}</button>`).join('')}
-                    <input type="text" id="ev-other" class="ev-other" placeholder="다른 행사 (예: 임직식)" oninput="worshipCtx.ev.other = this.value">
-                </div>
-                <input type="text" id="ev-memo" class="ev-memo" placeholder="메모 (예: 성찬 참여 약 3,000명 · 세례 24명)" oninput="worshipCtx.ev.memo = this.value">
-            </div>
+            <div class="ev-card" id="ev-card"></div>
 
             <div class="grid-hint">빈 칸은 0으로 저장됩니다. 부별 합계는 자동으로 계산되어 기존 '1부·2부·3부·총계'로도 함께 저장됩니다.</div>
         </div>`;
@@ -4320,15 +4338,22 @@
         });
         // 행사 태그 — 주를 바꾸거나 저장값이 새로 오면 시트 값으로, 장소 추가·빼기로 다시 그릴 때는 고르던 그대로
         if (!worshipCtx.ev || worshipCtx.ev.week !== weekKey) {
-            const tags = String(saved[EV_KEY] ?? '').split(',').map(t => t.trim()).filter(Boolean);
-            worshipCtx.ev = { week: weekKey, had: tags.length > 0 || !!String(saved[EV_MEMO_KEY] ?? '').trim(),
-                              tags: tags.filter(t => SUNDAY_EVENT_TAGS.includes(t)),
-                              other: tags.filter(t => !SUNDAY_EVENT_TAGS.includes(t)).join(', '),
-                              memo: String(saved[EV_MEMO_KEY] ?? '') };
+            const cur = SUN_EV_SAVED[weekKey];
+            const src = cur || { tags: String(saved[EV_KEY] ?? '').split(',').map(t => t.trim()).filter(Boolean),
+                                 memo: String(saved[EV_MEMO_KEY] ?? '') };
+            worshipCtx.ev = { week: weekKey, tags: [...src.tags], memo: src.memo,
+                              orig: JSON.stringify([src.tags, src.memo.trim()]) };
+            // 주일행사 줄을 아직 안 받았으면 받아서, 손대기 전이면 그 값으로 바꾼다
+            if (!(weekKey in SUN_EV_SAVED)) loadSunEvSaved(weekKey).then(() => {
+                const ev = worshipCtx?.ev;
+                if (!ev || ev.week !== weekKey || !SUN_EV_SAVED[weekKey]) return;
+                if (JSON.stringify([ev.tags, ev.memo.trim()]) !== ev.orig) return;   // 이미 고치는 중
+                worshipCtx.ev = null;
+                renderWorshipGrid();
+            });
         }
-        document.querySelectorAll('.ev-tag').forEach(b => b.classList.toggle('on', worshipCtx.ev.tags.includes(b.dataset.tag)));
-        document.getElementById('ev-other').value = worshipCtx.ev.other;
-        document.getElementById('ev-memo').value = worshipCtx.ev.memo;
+        loadSunEvVocab();
+        renderEvCard();
         const sel = document.getElementById('loc-add-select');
         if (sel) sel.onchange = () => {
             document.getElementById('loc-add-custom').style.display = sel.value === '__custom' ? '' : 'none';
@@ -4336,10 +4361,66 @@
         updateWorshipTotals();
     }
 
+    function renderEvCard() {
+        const box = document.getElementById('ev-card'), ev = worshipCtx?.ev;
+        if (!box || !ev) return;
+        const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const vocab = [...SUN_EV_VOCAB];
+        ev.tags.forEach(t => { if (!vocab.includes(t)) vocab.push(t); });
+        box.innerHTML = `
+                <div class="fh-title">이 주일의 행사 <span>해당할 때만 고르세요 · 인원은 위 출석 그대로 씁니다 · 서현·송림 공통</span></div>
+                <div class="ev-tags">
+                    ${vocab.map(t => `<button type="button" class="ev-tag${ev.tags.includes(t) ? ' on' : ''}" data-tag="${esc(t)}" onclick="toggleSundayEvent(this)">${esc(t)}</button>`).join('')}
+                    <input type="text" id="ev-other" class="ev-other" placeholder="＋ 새 행사 (예: 새생명 축제)" maxlength="30"
+                           onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();addSundayEvent()}">
+                </div>
+                <input type="text" id="ev-memo" class="ev-memo" placeholder="메모 (예: 성찬 참여 약 3,000명 · 세례 24명)" maxlength="300"
+                       value="${esc(ev.memo)}" oninput="worshipCtx.ev.memo = this.value">`;
+    }
+
     function toggleSundayEvent(btn) {
         const t = btn.dataset.tag, ev = worshipCtx.ev;
         ev.tags = ev.tags.includes(t) ? ev.tags.filter(x => x !== t) : [...ev.tags, t];
         btn.classList.toggle('on', ev.tags.includes(t));
+    }
+
+    /* 새 행사 이름 — 쓰고 Enter 하면 버튼이 되어 골라진다. 저장되면 다음부터 모두에게 버튼으로 뜬다 */
+    function addSundayEvent() {
+        const inp = document.getElementById('ev-other'), ev = worshipCtx?.ev;
+        if (!inp || !ev) return;
+        inp.value.split(',').map(t => t.trim().slice(0, 30)).filter(Boolean)
+            .forEach(t => { if (!ev.tags.includes(t)) ev.tags.push(t); });
+        renderEvCard();
+        document.getElementById('ev-other')?.focus();
+    }
+
+    /* 행사가 바뀌었으면 '주일행사/주일' 줄로 따로 저장한다. 서현·송림 줄에 넣지 않는다 —
+       대시보드에서 고친 값과 한 곳에 있어야 하고, 출석 표를 낸 시각도 건드리지 않는다. */
+    async function saveSundayEvent(weekKey) {
+        const ev = worshipCtx?.ev;
+        if (!ev || ev.week !== weekKey) return true;
+        const pending = document.getElementById('ev-other')?.value || '';
+        pending.split(',').map(t => t.trim().slice(0, 30)).filter(Boolean)
+            .forEach(t => { if (!ev.tags.includes(t)) ev.tags.push(t); });
+        const memo = String(ev.memo || '').trim();
+        if (JSON.stringify([ev.tags, memo]) === ev.orig) return true;   // 그대로면 안 보낸다
+        try {
+            const res = await fetch(GAS_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ weekKey, groupKey: '주일행사', itemName: '주일',
+                                       formData: { [EV_KEY]: ev.tags.join(','), [EV_MEMO_KEY]: memo } }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || '저장 실패');
+            SUN_EV_SAVED[weekKey] = { tags: [...ev.tags], memo };
+            ev.tags.forEach(t => { if (!SUN_EV_VOCAB.includes(t)) SUN_EV_VOCAB.push(t); });
+            ev.orig = JSON.stringify([ev.tags, memo]);
+            return true;
+        } catch (e) {
+            console.warn('행사 저장 실패:', e);
+            return false;
+        }
     }
 
     function addWorshipLocation() {
@@ -4410,14 +4491,6 @@
         // 기존 대시보드가 읽는 부별 총계도 함께 저장한다
         WORSHIP_PARTS.forEach(p => { formData[p] = partTotal[p] || 0; });
         formData['총계'] = grand;
-        // 행사 태그 — 고른 것이 있거나, 전에 있던 것을 지울 때만 보낸다(빈 값이 예전 태그를 덮는다)
-        const ev = worshipCtx.ev || { tags: [], other: '', memo: '' };
-        const evTags = [...ev.tags, ...String(ev.other || '').split(',').map(t => t.trim()).filter(Boolean)];
-        const evMemo = String(ev.memo || '').trim();
-        if (evTags.length || evMemo || ev.had) {
-            formData[EV_KEY] = evTags.join(',');
-            formData[EV_MEMO_KEY] = evMemo;
-        }
 
         const btn = document.getElementById('form-submit-btn');
         btn.classList.add('btn-loading'); btn.disabled = true; btn.textContent = '구글시트 저장 중...';
@@ -4430,6 +4503,8 @@
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.message || '저장 실패');
+            const evOk = await saveSundayEvent(weekKey);
+            const evTags = worshipCtx?.ev?.tags || [];
             markSubmitted('sunday', itemName, 'sunday', formData, weekKey,
                           { submittedAt: data.savedAt || new Date().toISOString(), fromSheet: true });
 
@@ -4438,7 +4513,7 @@
             document.getElementById('done-dept-name').textContent = `주일예배 ${itemName} 제출 완료`;
             const sub = document.getElementById('done-subtitle');
             if (sub) sub.textContent = `1부 ${partTotal['1부']||0} · 2부 ${partTotal['2부']||0} · 3부 ${partTotal['3부']||0} · 총 ${grand}명` +
-                (evTags.length ? ` · ${evTags.join('·')}` : '');
+                (evTags.length ? ` · ${evTags.join('·')}` : '') + (evOk ? '' : ' · ⚠️ 행사는 저장 못 함 — 다시 열어 저장해 주세요');
             const now = new Date();
             document.getElementById('done-time').textContent =
                 `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;

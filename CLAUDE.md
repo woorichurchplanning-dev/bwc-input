@@ -47,3 +47,10 @@
 - 확인은 Playwright 로. **헤드리스 기본 UA 는 막혀 있으니** 평범한 크롬 UA 를 쓸 것
 - 시트를 건드리지 않고 확인하려면 POST 를 가로채 끊는다:
   `page.route('**/script.google.com/macros/**', r => r.request().method()==='POST' ? r.abort() : r.continue())`
+
+## 주일 행사 태그
+
+주일예배 표(서현·송림) 아래 '이 주일의 행사'. 태그는 미리 정하지 않는다 — Apps Script `?mode=event-tags` 목록을
+버튼으로 보여 주고, 새 이름은 쓰고 Enter. 저장은 출석 저장 뒤 **따로** `주일행사/주일` 줄로(`saveSundayEvent`),
+바뀌었을 때만. 대시보드 주일예배 탭에서 고친 값과 같은 곳이다. 서현·송림 줄에 '행사' 칸을 넣지 말 것 —
+옛 값(10/14~)은 `주일행사`가 없을 때만 읽는다.
