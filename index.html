@@ -1066,6 +1066,23 @@
     /* ══════════════════════════════════════════════════
        ADMIN LOGIN
        ══════════════════════════════════════════════════ */
+    .fin-bar { display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; margin-bottom:var(--s5); }
+    .fin-bar select { max-width:200px; text-align:center; }
+    .fin-nav, .fin-dl { height:36px; border:1px solid var(--color-border-default); background:var(--color-bg-surface); border-radius:8px; cursor:pointer; }
+    .fin-nav { width:36px; font-size:18px; }
+    .fin-dl { padding:0 var(--s3); font-size:14px; font-weight:600; }
+    .fin-push { margin-left:auto; }
+    .fin-h { font-size:15px; font-weight:700; margin:var(--s5) 0 var(--s2); }
+    .fin-wrap { overflow-x:auto; border:1px solid var(--color-border-default); border-radius:10px; background:var(--color-bg-surface); }
+    .fin-t { border-collapse:collapse; width:100%; font-size:13px; white-space:nowrap; }
+    .fin-t th, .fin-t td { padding:7px 10px; border-bottom:1px solid var(--color-border-default); text-align:right; }
+    .fin-t th:first-child, .fin-t td:first-child { text-align:left; position:sticky; left:0; background:var(--color-bg-surface); }
+    .fin-t thead th { background:var(--color-bg-subtle, #f6f7f9); font-weight:700; }
+    .fin-t tr.fin-sum td { font-weight:700; background:var(--color-bg-subtle, #f6f7f9); }
+    .fin-t td.fin-empty { color:var(--color-text-tertiary, #aaa); }
+    .fin-t tbody tr.fin-click { cursor:pointer; }
+    .fin-t tbody tr.fin-click:hover td, .fin-t tbody tr.fin-on td { background:#eef4ff; }
+    .fin-note { font-size:12px; color:var(--color-text-secondary); margin-top:var(--s2); }
     .admin-login {
         max-width: 480px;
         margin: 80px auto;
@@ -2169,6 +2186,24 @@
                 </div>
             </div>
 
+            <!-- 재정부 화면 (finance 로 로그인) — 주일학교 인원·헌금만 -->
+            <div id="finance-dashboard" style="display:none">
+                <div class="page-hdr">
+                    <div class="page-hdr-title">
+                        <h2>주일학교 인원 · 헌금</h2>
+                        <p>재정부 조회 · 주일 날짜별</p>
+                    </div>
+                </div>
+                <div class="fin-bar">
+                    <button class="fin-nav" onclick="finShiftMonth(-1)" aria-label="이전 달">‹</button>
+                    <select id="fin-month" class="form-input" onchange="finLoad()"></select>
+                    <button class="fin-nav" onclick="finShiftMonth(1)" aria-label="다음 달">›</button>
+                    <button class="fin-dl fin-push" onclick="finDownload()">⬇ 엑셀(CSV)</button>
+                    <button class="fin-dl" onclick="finLogout()">로그아웃</button>
+                </div>
+                <div id="fin-body"></div>
+            </div>
+
             <!-- 데이터 현황 화면 (로그인 후) -->
             <div id="admin-dashboard" style="display:none">
                 <div class="page-hdr">
@@ -2666,6 +2701,8 @@
 
         // 데이터 현황 탭으로 전환할 때 초기화
         if (tab === 'admin') {
+            // 재정부로 들어와 있으면(새로고침 포함) 재정부 화면을 그대로 보여 준다
+            if (getFinKey() && document.getElementById('admin-dashboard').style.display === 'none') { finEnter(); return; }
             if (document.getElementById('admin-week-select').options.length === 0) {
                 initAdminWeekSelect();
                 renderAdminData();
@@ -5190,11 +5227,25 @@
        조회 키를 푸는 것은 비밀번호 쪽이라, 아이디는 여기서만 본다. */
     const ADMIN_ID = 'admin';
 
+    /* 재정부 아이디. 관리자 화면 대신 주일학교 인원·헌금 표만 본다.
+       풀리는 키도 다르다 — 전체 조회 키가 아니라 Apps Script mode=finance(주일학교만)에만 듣는 키.
+       비밀번호를 바꾸면 FIN_PW_HASH 와 FIN_KEY_BLOB 둘 다 새로 만들어야 한다. */
+    const FIN_IDS = ['finance', '재정부'];
+    const FIN_PW_HASH = 'a084c0d39842c483cbc096d507be640237e09603f735f728146ff10ebea3a1fb';
+
     async function adminLogin() {
         const idInput = document.getElementById('admin-id');
         const input = document.getElementById('admin-pwd');
         const id = idInput.value.trim().toLowerCase();
         const pw = input.value;
+        if (FIN_IDS.includes(id) && (await sha256Hex(pw)) === FIN_PW_HASH) {
+            const k = await unlockReadKey(pw, FIN_KEY_BLOB, FIN_KEY_STORE);
+            idInput.value = '';
+            input.value = '';
+            if (!k) { alert('로그인은 됐지만 조회 키를 풀지 못했습니다'); return; }
+            finEnter();
+            return;
+        }
         const ok = id === ADMIN_ID && (await sha256Hex(pw)) === ADMIN_PW_HASH;
         if (ok) {
             await unlockReadKey(pw);   // 전체 조회 키를 이 비밀번호로 푼다
@@ -5215,6 +5266,163 @@
             input.value = '';
             input.focus();
         }
+    }
+
+    /* ══════════════════════════════════════════════════
+       재정부 화면 — 주일학교 인원·헌금 (주일 날짜별)
+       ══════════════════════════════════════════════════ */
+    /* 한 달씩 본다. 그 달 주일(최대 5개)을 mode=finance 한 번으로 받는다.
+       부서 순서는 입력 폼(DEPARTMENTS.sunday_school)과 같다. 사랑1부·사랑2부는 시트에서 '사랑부'로 합쳐 온다. */
+    const FIN = { month: '', data: {}, sel: '' };
+    const FIN_CACHE = {};
+    const finPad = n => String(n).padStart(2, '0');
+    const finNum = v => { const n = Number(String(v ?? '').replace(/[^\d.-]/g, '')); return isFinite(n) ? n : 0; };
+    const finFmt = n => n ? n.toLocaleString('ko-KR') : '–';
+
+    function finDeptOrder(data) {
+        const base = DEPARTMENTS.sunday_school.groups.flatMap(g => g.items.map(i => i.name))
+            .map(n => /^사랑[12]부$/.test(n) ? '사랑부' : n);
+        const out = [...new Set(base)];
+        Object.values(data).forEach(w => Object.keys(w || {}).forEach(d => { if (!out.includes(d)) out.push(d); }));
+        return out;
+    }
+    /* 한 부서 한 주 — 1부·2부 학생/교사/헌금 */
+    function finRow(o) {
+        o = o || {};
+        const g = f => finNum(o[f]);
+        const r = {
+            s1: g('1부 학생'), t1: g('1부 교사'), o1: g('1부 헌금'),
+            s2: g('2부 학생'), t2: g('2부 교사'), o2: g('2부 헌금'),
+        };
+        r.st = r.s1 + r.s2; r.tt = r.t1 + r.t2; r.ot = r.o1 + r.o2;
+        r.has = Object.keys(o).some(k => k !== '비고');
+        return r;
+    }
+
+    function finEnter() {
+        document.getElementById('admin-login-screen').style.display = 'none';
+        document.getElementById('admin-dashboard').style.display = 'none';
+        document.getElementById('finance-dashboard').style.display = 'block';
+        const sel = document.getElementById('fin-month');
+        if (!sel.options.length) {
+            const now = new Date();
+            for (let i = 0; i < 24; i++) {
+                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const v = `${d.getFullYear()}-${finPad(d.getMonth() + 1)}`;
+                sel.add(new Option(`${d.getFullYear()}년 ${d.getMonth() + 1}월`, v));
+            }
+        }
+        finLoad();
+    }
+    function finLogout() {
+        try { sessionStorage.removeItem(FIN_KEY_STORE); } catch {}
+        document.getElementById('finance-dashboard').style.display = 'none';
+        document.getElementById('admin-login-screen').style.display = '';
+    }
+    function finShiftMonth(step) {
+        const sel = document.getElementById('fin-month');
+        const i = sel.selectedIndex - step;   // 위가 최근 달
+        if (i < 0 || i >= sel.options.length) return;
+        sel.selectedIndex = i; finLoad();
+    }
+    function finSundays(ym) {
+        const [y, m] = ym.split('-').map(Number);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const out = [];
+        for (let d = new Date(y, m - 1, 1); d.getMonth() === m - 1; d.setDate(d.getDate() + 1)) {
+            if (d.getDay() === 0 && d <= today) out.push(`${y}-${finPad(m)}-${finPad(d.getDate())}`);
+        }
+        return out;
+    }
+    async function finLoad() {
+        const ym = document.getElementById('fin-month').value;
+        const body = document.getElementById('fin-body');
+        FIN.month = ym; FIN.sel = '';
+        const weeks = finSundays(ym);
+        if (!weeks.length) { FIN.data = {}; body.innerHTML = '<p class="fin-note">이 달에는 아직 지난 주일이 없습니다.</p>'; return; }
+        if (!FIN_CACHE[ym]) {
+            body.innerHTML = '<p class="fin-note">불러오는 중…</p>';
+            const key = getFinKey();
+            if (!key) { finLogout(); return; }
+            try {
+                const j = await fetch(`${GAS_URL}?mode=finance&key=${encodeURIComponent(key)}&weekKeys=${weeks.join(',')}`).then(r => r.json());
+                if (!j.success) throw new Error(j.error || '조회 실패');
+                FIN_CACHE[ym] = j.data || {};
+            } catch (e) {
+                if (FIN.month === ym) body.innerHTML = `<p class="fin-note">불러오지 못했습니다 (${e.message}). 잠시 뒤 다시 골라 주세요.</p>`;
+                return;
+            }
+        }
+        if (FIN.month !== ym) return;   // 그사이 다른 달을 골랐다
+        FIN.data = FIN_CACHE[ym];
+        const filled = weeks.filter(w => FIN.data[w]);
+        FIN.sel = filled[filled.length - 1] || weeks[weeks.length - 1];
+        finRender();
+    }
+    function finSelect(w) { FIN.sel = w; finRender(); }
+
+    function finRender() {
+        const weeks = finSundays(FIN.month), depts = finDeptOrder(FIN.data);
+        const md = w => { const [, m, d] = w.split('-'); return `${+m}/${+d}`; };
+        const cell = n => n ? `<td>${finFmt(n)}</td>` : '<td class="fin-empty">–</td>';
+
+        // ① 주일별 합계
+        let tot = { st: 0, tt: 0, ot: 0 };
+        const sumRows = weeks.map(w => {
+            const rs = depts.map(d => finRow(FIN.data[w]?.[d]));
+            const r = rs.reduce((a, x) => ({ st: a.st + x.st, tt: a.tt + x.tt, ot: a.ot + x.ot }), { st: 0, tt: 0, ot: 0 });
+            const n = rs.filter(x => x.has).length;
+            tot.st += r.st; tot.tt += r.tt; tot.ot += r.ot;
+            return `<tr class="fin-click${w === FIN.sel ? ' fin-on' : ''}" onclick="finSelect('${w}')"><td>${md(w)} 주일</td>${cell(r.st)}${cell(r.tt)}${cell(r.st + r.tt)}${cell(r.ot)}<td>${n} / ${depts.length}</td></tr>`;
+        }).join('');
+        const t1 = `<div class="fin-h">주일별 합계</div><div class="fin-wrap"><table class="fin-t">
+            <thead><tr><th>주일</th><th>학생</th><th>교사</th><th>인원 계</th><th>헌금(원)</th><th>입력 부서</th></tr></thead>
+            <tbody>${sumRows}<tr class="fin-sum"><td>이달 합계</td>${cell(tot.st)}${cell(tot.tt)}${cell(tot.st + tot.tt)}${cell(tot.ot)}<td></td></tr></tbody></table></div>
+            <p class="fin-note">줄을 누르면 아래에 그 주일의 부서별 내역이 나옵니다.</p>`;
+
+        // ② 선택한 주일 · 부서별
+        const w = FIN.sel, acc = { s1: 0, t1: 0, o1: 0, s2: 0, t2: 0, o2: 0, st: 0, tt: 0, ot: 0 };
+        const dRows = depts.map(d => {
+            const r = finRow(FIN.data[w]?.[d]);
+            Object.keys(acc).forEach(k => acc[k] += r[k]);
+            return `<tr><td>${d}</td>${['s1','t1','o1','s2','t2','o2','st','tt','ot'].map(k => cell(r[k])).join('')}</tr>`;
+        }).join('');
+        const t2 = `<div class="fin-h">${md(w)} 주일 · 부서별</div><div class="fin-wrap"><table class="fin-t">
+            <thead><tr><th>부서</th><th>1부 학생</th><th>1부 교사</th><th>1부 헌금</th><th>2부 학생</th><th>2부 교사</th><th>2부 헌금</th><th>학생 계</th><th>교사 계</th><th>헌금 계</th></tr></thead>
+            <tbody>${dRows}<tr class="fin-sum"><td>합계</td>${['s1','t1','o1','s2','t2','o2','st','tt','ot'].map(k => cell(acc[k])).join('')}</tr></tbody></table></div>`;
+
+        // ③ 이달 부서별 헌금
+        const colTot = weeks.map(() => 0);
+        const oRows = depts.map(d => {
+            let s = 0;
+            const cs = weeks.map((wk, i) => { const v = finRow(FIN.data[wk]?.[d]).ot; s += v; colTot[i] += v; return cell(v); }).join('');
+            return `<tr><td>${d}</td>${cs}${cell(s)}</tr>`;
+        }).join('');
+        const t3 = `<div class="fin-h">이달 부서별 헌금(원)</div><div class="fin-wrap"><table class="fin-t">
+            <thead><tr><th>부서</th>${weeks.map(wk => `<th>${md(wk)}</th>`).join('')}<th>이달 계</th></tr></thead>
+            <tbody>${oRows}<tr class="fin-sum"><td>합계</td>${colTot.map(cell).join('')}${cell(colTot.reduce((a, b) => a + b, 0))}</tr></tbody></table></div>
+            <p class="fin-note">'–'는 입력이 없거나 0인 칸입니다. 숫자는 각 부서 교역자가 입력앱에 낸 값 그대로입니다.</p>`;
+
+        document.getElementById('fin-body').innerHTML = t1 + t2 + t3;
+    }
+
+    /* 그 달 전체를 '주일 × 부서' 한 줄씩 — 엑셀에서 바로 열리게 BOM 을 붙인다 */
+    function finDownload() {
+        const weeks = finSundays(FIN.month), depts = finDeptOrder(FIN.data);
+        if (!weeks.length) return;
+        const head = ['주일', '부서', '1부 학생', '1부 교사', '1부 헌금', '2부 학생', '2부 교사', '2부 헌금', '학생 계', '교사 계', '헌금 계'];
+        const lines = [head];
+        weeks.forEach(w => depts.forEach(d => {
+            const r = finRow(FIN.data[w]?.[d]);
+            if (!r.has) return;
+            lines.push([w, d, r.s1, r.t1, r.o1, r.s2, r.t2, r.o2, r.st, r.tt, r.ot]);
+        }));
+        const csv = '﻿' + lines.map(l => l.map(v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\r\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        a.download = `주일학교_인원헌금_${FIN.month}.csv`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }
 
     /* ══════════════════════════════════════════════════
@@ -6075,10 +6283,14 @@
     const READ_KEY_STORE = 'bwc-input-sheet-read-key';
     const READ_KEY_BLOB = '9g+u+zXmL9tDZC/EJ8BQNWeg6bK9TdKViTGv91LKXof0oRmAppEbPSo2nr/UTsi+oX2OR/5wLfXsa5FXv8bAFYW2dSusr47Wk2lUdg==';
     const getReadKey = () => { try { return sessionStorage.getItem(READ_KEY_STORE) || ''; } catch { return ''; } };
+    /* 재정부 키 — 재정부 비밀번호로 잠가 둔 것. 주일학교 묶음만 받는 길(mode=finance)에만 듣는다. */
+    const FIN_KEY_STORE = 'bwc-input-fin-key';
+    const FIN_KEY_BLOB = 'x/v4Nl1TIlVNQ6jmewC7lFZdmCo7rIo89YAIx/BNQLLRgB1ZHLMk/KHu+pJF96S2n6DRngTy9DQ2jzeL/cMqaAnfi6hRp4WvbiL2Fg==';
+    const getFinKey = () => { try { return sessionStorage.getItem(FIN_KEY_STORE) || ''; } catch { return ''; } };
 
-    async function unlockReadKey(password) {
+    async function unlockReadKey(password, blob = READ_KEY_BLOB, store = READ_KEY_STORE) {
         try {
-            const raw = Uint8Array.from(atob(READ_KEY_BLOB), ch => ch.charCodeAt(0));
+            const raw = Uint8Array.from(atob(blob), ch => ch.charCodeAt(0));
             const salt = raw.slice(0, 16), iv = raw.slice(16, 28), ct = raw.slice(28);
             const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password),
                 'PBKDF2', false, ['deriveKey']);
@@ -6087,7 +6299,7 @@
                 base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
             const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, k, ct);
             const key = new TextDecoder().decode(pt);
-            try { sessionStorage.setItem(READ_KEY_STORE, key); } catch {}
+            try { sessionStorage.setItem(store, key); } catch {}
             return key;
         } catch (e) {
             console.warn('조회 키 해제 실패:', e);
