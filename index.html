@@ -5284,6 +5284,7 @@
                 return;
             }
             try { sessionStorage.setItem(FIN_KEY_STORE, j.key); } catch {}
+            Object.entries(j.data || {}).forEach(([w, v]) => { FIN_CACHE[w] = v; });   // 최근 12주는 로그인 답에 같이 온다
             idInput.value = '';
             input.value = '';
             finEnter();
@@ -5416,26 +5417,45 @@
         const token = FIN.token = {};
         const weeks = finWeeks();
         if (!weeks.length) { body.innerHTML = '<p class="fin-note">이 달에는 아직 지난 주일이 없습니다.</p>'; return; }
-        const need = weeks.filter(w => !(w in FIN_CACHE));
-        if (need.length) {
+        if (weeks.some(w => !(w in FIN_CACHE))) {
             body.innerHTML = '<p class="fin-note">불러오는 중…</p>';
-            const key = getFinKey();
-            if (!key) { finLogout(); return; }
-            try {
-                const j = await fetch(`${GAS_URL}?mode=finance&key=${encodeURIComponent(key)}&weekKeys=${need.join(',')}`).then(r => r.json());
-                if (!j.success) {
-                    // 비밀번호가 바뀌면 키도 바뀐다 — 다시 로그인
-                    if (j.error === 'forbidden') { alert('비밀번호가 바뀌어 다시 로그인해야 합니다'); finLogout(); return; }
-                    throw new Error(j.error || '조회 실패');
-                }
-                need.forEach(w => { FIN_CACHE[w] = (j.data || {})[w] || {}; });
-            } catch (e) {
+            // 고른 것만이 아니라 앞뒤 주까지 한 번에 받는다 — 다음에 ‹ › 를 누르면 기다리지 않게
+            try { await finFetch(weeks); }
+            catch (e) {
+                if (e.message === 'forbidden') { alert('비밀번호가 바뀌어 다시 로그인해야 합니다'); finLogout(); return; }
                 if (FIN.token === token) body.innerHTML = `<p class="fin-note">불러오지 못했습니다 (${e.message}). 잠시 뒤 다시 골라 주세요.</p>`;
                 return;
             }
         }
         if (FIN.token !== token) return;   // 그사이 다른 것을 골랐다
         body.innerHTML = FIN.view === 'week' ? finWeekHtml(weeks[0]) : finMonthHtml(weeks);
+        finPrefetch(weeks[0]);
+    }
+    /* 받을 주 + 그 앞 주들을 채워 한 번에 최대 12주. 같은 주를 두 번 묻지 않게 FIN_PENDING 에 걸어 둔다. */
+    const FIN_PENDING = {};
+    function finAround(w, n) {
+        const [y, m, d] = w.split('-').map(Number), out = [];
+        for (let i = 0; i < n; i++) { const t = new Date(y, m - 1, d - 7 * i); out.push(`${t.getFullYear()}-${finPad(t.getMonth() + 1)}-${finPad(t.getDate())}`); }
+        return out;
+    }
+    async function finFetch(weeks) {
+        const want = [...new Set([...weeks, ...finAround(weeks[0], 12)])].filter(w => !(w in FIN_CACHE)).slice(0, 12);
+        const fresh = want.filter(w => !FIN_PENDING[w]);
+        if (fresh.length) {
+            const key = getFinKey();
+            if (!key) throw new Error('forbidden');
+            const p = fetch(`${GAS_URL}?mode=finance&key=${encodeURIComponent(key)}&weekKeys=${fresh.join(',')}`).then(r => r.json()).then(j => {
+                if (!j.success) throw new Error(j.error || '조회 실패');
+                fresh.forEach(w => { FIN_CACHE[w] = (j.data || {})[w] || {}; });
+            }).finally(() => fresh.forEach(w => delete FIN_PENDING[w]));
+            fresh.forEach(w => { FIN_PENDING[w] = p; });
+        }
+        await Promise.all([...new Set(weeks.map(w => FIN_PENDING[w]).filter(Boolean))]);
+    }
+    /* 보고 있는 것보다 앞의 12주를 조용히 미리 받아 둔다 */
+    function finPrefetch(w) {
+        const prev = finAround(w, 13).slice(1).filter(x => !(x in FIN_CACHE) && !FIN_PENDING[x]);
+        if (prev.length) finFetch([prev[0]]).catch(() => {});
     }
 
     function finCards(items) {
