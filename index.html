@@ -4836,6 +4836,21 @@
             </div>
             <div class="grid-hint">빈 칸은 0으로 저장됩니다. 가로·세로 합계가 자동 계산되니 확인 후 제출하세요.
                 제출하면 교구별로 나뉘어 구글시트에 저장됩니다.</div>
+        </div>
+        <div class="form-card">
+            <div class="form-card-title">휴회 · 이번 주 모임이 없었을 때</div>
+            <div class="ev-card" style="margin-top:0;padding-top:0;border-top:0">
+                <div class="ev-tags">
+                    <button type="button" class="ev-tag" id="off-toggle" onclick="toggleOffWeek(this)">이번 주 휴회</button>
+                </div>
+                <div class="ev-tags">
+                    <span class="loc-add-label" style="margin-right:4px">사유</span>
+                    ${[...OFF_REASONS, '방학'].map(r => `<button type="button" class="ev-tag" onclick="pickOffReason('${r}')">${r}</button>`).join('')}
+                </div>
+                <input type="text" id="off-why" class="ev-memo" placeholder="휴회 사유 (예: 여름 방학)"
+                       oninput="offCtx.why = this.value; offCtx.touched = true">
+                <div class="grid-hint">휴회로 내면 위 표의 숫자는 저장하지 않습니다. 대시보드 그래프는 이 주를 건너뛰어 이어 그리고, 날짜 밑에 사유가 나옵니다.</div>
+            </div>
         </div>`;
 
         restoreDistrictGrid(groupKey, formWeekSelect.value);
@@ -4860,6 +4875,13 @@
     }
 
     function restoreDistrictGrid(groupKey, weekKey) {
+        // 휴회 — 교구 표는 한 묶음이 통째로 쉰다. 아무 교구에나 '휴회'가 적혀 있으면 그 주는 휴회로 본다.
+        const rowsData = DEPARTMENTS[groupKey].items.map(i => submissionStatus[weekKey]?.[`${weekKey}:${groupKey}:${i.name || i}`]?.data || {});
+        const why = rowsData.map(d => String(d['휴회'] ?? '').trim()).find(Boolean) || '';
+        offCtx = { key: `${weekKey}:${groupKey}`, touched: false, had: !!why, on: !!why, days: [], why };
+        const t = document.getElementById('off-toggle'), w = document.getElementById('off-why');
+        if (t) t.classList.toggle('on', !!why);
+        if (w) w.value = why;
         document.querySelectorAll('.grid-input').forEach(inp => {
             const saved = submissionStatus[weekKey]?.[`${weekKey}:${groupKey}:${inp.dataset.row}`]?.data;
             const v = saved?.[inp.dataset.key];
@@ -4900,7 +4922,9 @@
         });
         const rows = Object.keys(byRow);
         const anyValue = rows.some(r => cols.some(c => byRow[r][c.key] > 0));
-        if (!anyValue) {
+        const off = offCtx?.on ? (String(offCtx.why || '').trim() || '휴회') : '';
+        const clearOff = !off && offCtx?.had;   // 예전에 휴회로 냈던 주를 숫자로 고칠 때 휴회를 지운다
+        if (!anyValue && !off) {
             if (alertArea) alertArea.innerHTML = `<div style="padding:var(--s3) var(--s4);background:var(--color-negative-bg);border:1px solid rgba(192,18,60,0.2);border-radius:var(--r);color:var(--color-negative);font-size:13px">⚠️ 최소 한 개 이상 입력해주세요</div>`;
             return;
         }
@@ -4913,7 +4937,11 @@
         for (const row of rows) {
             btn.textContent = `저장 중… ${done}/${rows.length}`;
             const formDataKorean = {};
-            cols.forEach(c => formDataKorean[c.label] = byRow[row][c.key]);
+            if (off) formDataKorean['휴회'] = off;   // 휴회면 숫자는 보내지 않는다
+            else {
+                cols.forEach(c => formDataKorean[c.label] = byRow[row][c.key]);
+                if (clearOff) formDataKorean['휴회'] = '';
+            }
             try {
                 const res = await fetch(gasUrl, {
                     method: 'POST',
@@ -4922,7 +4950,7 @@
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.message || '저장 실패');
-                markSubmitted(groupKey, row, getDeptType(groupKey), byRow[row], weekKey,
+                markSubmitted(groupKey, row, getDeptType(groupKey), off ? { '휴회': off } : byRow[row], weekKey,
                               { submittedAt: data.savedAt || new Date().toISOString(), fromSheet: true });
                 done++;
             } catch (e) {
