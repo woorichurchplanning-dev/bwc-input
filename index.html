@@ -1077,11 +1077,15 @@
     .fin-seg button.on { background:var(--color-brand-primary, #2563eb); color:#fff; }
     .fin-pw { display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; margin-bottom:var(--s4); }
     .fin-pw .admin-input { max-width:200px; margin:0; }
-    .fin-pw .btn-primary { width:auto; padding:0 var(--s4); height:40px; margin:0; }
+    .fin-pw .btn-primary { width:auto; flex:0 0 auto; padding:0 var(--s5); height:40px; margin:0; }
+    #fin-mail-to { flex:1 1 280px; }
     .fin-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:var(--s3); }
     .fin-card { border:1px solid var(--color-border-default); border-radius:10px; background:var(--color-bg-surface); padding:var(--s3) var(--s4); }
     .fin-card b { display:block; font-size:22px; margin-top:4px; }
     .fin-card span { font-size:12px; color:var(--color-text-secondary); }
+    .fin-mail { border:1px solid var(--color-border-default); border-radius:10px; background:var(--color-bg-surface); padding:var(--s3) var(--s4) 0; margin-bottom:var(--s4); }
+    .fin-mail-t { font-size:13px; margin-bottom:var(--s2); }
+    .fin-mail-on { font-size:14px; display:flex; gap:4px; align-items:center; }
     .fin-reset { margin-bottom:var(--s4); font-size:13px; color:var(--color-text-secondary); }
     .fin-reset summary { cursor:pointer; margin-bottom:var(--s2); }
     .fin-h { font-size:15px; font-weight:700; margin:var(--s5) 0 var(--s2); }
@@ -2216,8 +2220,19 @@
                     <select id="fin-month" class="form-input" onchange="finLoad()" style="display:none"></select>
                     <button class="fin-nav" onclick="finShift(1)" aria-label="다음">›</button>
                     <button class="fin-dl fin-push" onclick="finDownload()">⬇ 엑셀(CSV)</button>
+                    <button class="fin-dl" onclick="finMailToggle()">주간 보고 메일</button>
                     <button class="fin-dl" onclick="finPwToggle()">비밀번호 바꾸기</button>
                     <button class="fin-dl" onclick="finLogout()">로그아웃</button>
+                </div>
+                <div id="fin-mail" class="fin-mail" style="display:none">
+                    <div class="fin-mail-t">매주 <b>수요일 오전 10시</b>에 지난 주일의 주일학교 헌금 계수 보고를 메일로 보냅니다.</div>
+                    <div class="fin-pw">
+                        <input type="text" id="fin-mail-to" class="admin-input" style="max-width:360px" placeholder="받는 사람 이메일 (여러 명은 쉼표로)" autocomplete="off">
+                        <label class="fin-mail-on"><input type="checkbox" id="fin-mail-on"> 보내기</label>
+                        <button class="btn-primary" onclick="finMailSave()">저장</button>
+                        <button class="fin-dl" onclick="finMailSend()">지금 한 통 보내 보기</button>
+                        <span id="fin-mail-msg" class="fin-note"></span>
+                    </div>
                 </div>
                 <div id="fin-pw" class="fin-pw" style="display:none">
                     <input type="password" id="fin-pw-cur" class="admin-input" placeholder="지금 비밀번호" autocomplete="current-password">
@@ -5499,6 +5514,39 @@
         a.download = `주일학교_인원헌금_${FIN.view === 'week' ? weeks[0] : document.getElementById('fin-month').value}.csv`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
+    /* 주간 보고 메일 — 받는 사람·켜고 끄기. 「보고설정」 탭의 '재정부 받는 사람'·'재정부 보고' 줄에 저장된다(Finance.js). */
+    async function finMailToggle() {
+        const el = document.getElementById('fin-mail'), msg = document.getElementById('fin-mail-msg');
+        el.style.display = el.style.display === 'none' ? '' : 'none';
+        if (el.style.display) return;
+        msg.textContent = '불러오는 중…';
+        let j = null;
+        try { j = await finPost({ mode: 'finance-report-settings', key: getFinKey() }); } catch {}
+        if (!j?.success) { msg.textContent = '설정을 불러오지 못했습니다'; return; }
+        document.getElementById('fin-mail-to').value = j.settings.to.join(', ');
+        document.getElementById('fin-mail-on').checked = j.settings.on;
+        msg.textContent = j.settings.to.length ? '' : '받는 사람을 넣고 저장하면 다음 수요일부터 갑니다';
+    }
+    async function finMailSave() {
+        const msg = document.getElementById('fin-mail-msg');
+        msg.textContent = '저장 중…';
+        let j = null;
+        try { j = await finPost({ mode: 'finance-report-save', key: getFinKey(),
+            to: document.getElementById('fin-mail-to').value, on: document.getElementById('fin-mail-on').checked }); } catch {}
+        if (!j?.success) { msg.textContent = '저장하지 못했습니다'; return; }
+        document.getElementById('fin-mail-to').value = j.settings.to.join(', ');
+        msg.textContent = !j.settings.to.length ? '받는 사람이 없어 보내지 않습니다'
+            : j.settings.on ? `✓ 저장했습니다. 매주 수요일 10시에 ${j.settings.to.length}명에게 갑니다` : '✓ 저장했습니다 (지금은 꺼져 있음)';
+    }
+    async function finMailSend() {
+        const msg = document.getElementById('fin-mail-msg');
+        msg.textContent = '보내는 중…';
+        let j = null;
+        try { j = await finPost({ mode: 'finance-report-send', key: getFinKey() }); } catch {}
+        msg.textContent = j?.success ? `✓ ${j.sent.to.join(', ')}에게 보냈습니다`
+            : j?.error === 'no_to' ? '저장된 받는 사람이 없습니다. 먼저 저장해 주세요' : '보내지 못했습니다';
     }
 
     /* 비밀번호 바꾸기 — Apps Script 가 확인하고 바꾼다. 키도 새로 나오므로 받아 둔다. */
