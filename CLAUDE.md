@@ -54,6 +54,12 @@
 - 시트를 건드리지 않고 확인하려면 POST 를 가로채 끊는다:
   `page.route('**/script.google.com/macros/**', r => r.request().method()==='POST' ? r.abort() : r.continue())`
 
+## 휴회
+
+수요예배·금요기도회·새벽기도(일반 폼 `off`), 교구 표 3종(`openDistrictGrid`), 주일예배 표(`worshipOffCard`),
+청년교구·주일학교 전 항목(`DEPARTMENTS` 아래에서 `off:'week'` 를 붙인다)에 '휴회'와 사유 칸이 있다. 시트에는 `휴회` 칸(사유)으로 간다.
+대시보드는 휴회이고 숫자가 없는 주를 그래프에서 빼고 날짜 밑에 사유를 적는다. 재정부 화면·메일은 그 부서를 '휴회 · 사유'로 보인다.
+
 ## 주일 행사 태그
 
 주일예배 표(서현·송림) 아래 '이 주일의 행사'. 태그는 미리 정하지 않는다 — Apps Script `?mode=event-tags` 목록을

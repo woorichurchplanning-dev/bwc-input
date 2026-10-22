@@ -2583,6 +2583,11 @@
         }
     };
 
+    /* 청년교구·주일학교도 그 주 통째로 쉰 때 '휴회'와 사유를 낸다(일반 폼의 휴회 칸).
+       대시보드는 휴회이고 숫자가 없는 주를 그래프에서 빼고 날짜 밑에 사유를 적는다. */
+    DEPARTMENTS.youth.items.forEach(i => { i.off = 'week'; i.offExtra = ['수련회', '방학']; });
+    DEPARTMENTS.sunday_school.groups.forEach(g => g.items.forEach(i => { i.off = 'week'; i.offExtra = ['수련회', '방학']; }));
+
     /* ══════════════════════════════════════════════════
        주차 계산 함수
        ══════════════════════════════════════════════════ */
@@ -3451,7 +3456,7 @@
                     </div>
                     <div class="ev-tags">
                         <span class="loc-add-label" style="margin-right:4px">사유</span>
-                        ${OFF_REASONS.map(r => `<button type="button" class="ev-tag" onclick="pickOffReason('${r}')">${r}</button>`).join('')}
+                        ${[...OFF_REASONS, ...(deptItem.offExtra || [])].map(r => `<button type="button" class="ev-tag" onclick="pickOffReason('${r}')">${r}</button>`).join('')}
                     </div>
                     <input type="text" id="off-why" class="ev-memo" placeholder="휴회 사유 (예: 특별새벽부흥회로 대체)"
                            value="${offCtx.why.replace(/"/g, '&quot;')}" oninput="offCtx.why = this.value; offCtx.touched = true">
@@ -4396,6 +4401,8 @@
 
             <div class="ev-card" id="ev-card"></div>
 
+            ${worshipOffCard(weekKey, itemName)}
+
             <div class="grid-hint">빈 칸은 0으로 저장됩니다. 부별 합계는 자동으로 계산되어 기존 '1부·2부·3부·총계'로도 함께 저장됩니다.</div>
         </div>`;
 
@@ -4535,6 +4542,29 @@
         if (g) g.textContent = grand.toLocaleString();
     }
 
+    /* 주일예배 휴회 — 그 장소에서 주일예배를 드리지 않은 주(공사·연합예배 등). '휴회' 칸에 사유만 남긴다.
+       장소를 더하거나 빼며 다시 그릴 때는 고르던 그대로 둔다. */
+    function worshipOffCard(weekKey, itemName) {
+        const okey = `${weekKey}:주일예배:${itemName}`;
+        if (!offCtx || offCtx.key !== okey || !offCtx.touched) {
+            const why = String(submissionStatus[weekKey]?.[`${weekKey}:sunday:${itemName}`]?.data?.['휴회'] ?? '').trim();
+            offCtx = { key: okey, touched: false, had: !!why, on: !!why, days: [], why };
+        }
+        return `
+            <div class="ev-card">
+                <div class="ev-tags">
+                    <span class="loc-add-label" style="margin-right:4px">휴회</span>
+                    <button type="button" class="ev-tag${offCtx.on ? ' on' : ''}" id="off-toggle" onclick="toggleOffWeek(this)">이번 주 ${itemName} 예배 없음</button>
+                </div>
+                <div class="ev-tags">
+                    <span class="loc-add-label" style="margin-right:4px">사유</span>
+                    ${['연합예배', '교회 행사', '시설 공사'].map(r => `<button type="button" class="ev-tag" onclick="pickOffReason('${r}')">${r}</button>`).join('')}
+                </div>
+                <input type="text" id="off-why" class="ev-memo" placeholder="휴회 사유 (예: 송림 본당 공사로 서현 연합예배)"
+                       value="${offCtx.why.replace(/"/g, '&quot;')}" oninput="offCtx.why = this.value; offCtx.touched = true">
+            </div>`;
+    }
+
     async function submitWorshipGrid() {
         const { itemName } = worshipCtx || {};
         if (!itemName) return;
@@ -4554,7 +4584,10 @@
         });
 
         const grand = WORSHIP_PARTS.reduce((a, p) => a + (partTotal[p] || 0), 0);
-        if (grand === 0) {
+        const off = offCtx?.key === `${weekKey}:주일예배:${itemName}` && offCtx.on ? (String(offCtx.why || '').trim() || '휴회') : '';
+        if (off) formData['휴회'] = off;
+        else if (offCtx?.had) formData['휴회'] = '';   // 휴회로 냈던 주를 숫자로 고칠 때
+        if (grand === 0 && !off) {
             if (alertArea) alertArea.innerHTML = `<div style="padding:var(--s3) var(--s4);background:var(--color-negative-bg);border:1px solid rgba(192,18,60,0.2);border-radius:var(--r);color:var(--color-negative);font-size:13px">⚠️ 최소 한 곳 이상 입력해주세요</div>`;
             return;
         }
@@ -4582,7 +4615,7 @@
             document.getElementById('screen-done').style.display = 'block';
             document.getElementById('done-dept-name').textContent = `주일예배 ${itemName} 제출 완료`;
             const sub = document.getElementById('done-subtitle');
-            if (sub) sub.textContent = `1부 ${partTotal['1부']||0} · 2부 ${partTotal['2부']||0} · 3부 ${partTotal['3부']||0} · 총 ${grand}명` +
+            if (sub) sub.textContent = off ? `휴회 · ${off}` : `1부 ${partTotal['1부']||0} · 2부 ${partTotal['2부']||0} · 3부 ${partTotal['3부']||0} · 총 ${grand}명` +
                 (evTags.length ? ` · ${evTags.join('·')}` : '') + (evOk ? '' : ' · ⚠️ 행사는 저장 못 함 — 다시 열어 저장해 주세요');
             const now = new Date();
             document.getElementById('done-time').textContent =
@@ -5372,6 +5405,7 @@
         };
         r.st = r.s1 + r.s2; r.tt = r.t1 + r.t2; r.ot = r.o1 + r.o2;
         r.has = Object.keys(o).some(k => k !== '비고');
+        r.off = String(o['휴회'] ?? '').trim();   // 휴회로 낸 부서 — 숫자 대신 사유를 보인다
         return r;
     }
     function finTotal(w, depts) {
@@ -5496,6 +5530,7 @@
         const rows = depts.map(d => {
             const r = finRow(w, d);
             FIN_COLS.forEach(k => acc[k] += r[k]);
+            if (r.off && !r.st && !r.tt && !r.ot) return `<tr><td>${d}</td><td colspan="${FIN_COLS.length}" style="text-align:left;color:var(--color-text-secondary)">휴회 · ${r.off.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))}</td></tr>`;
             return `<tr><td>${d}</td>${FIN_COLS.map(k => finCell(r[k])).join('')}</tr>`;
         }).join('');
         return finCards([['학생', finFmt(t.st) + '명'], ['교사', finFmt(t.tt) + '명'], ['헌금', finFmt(t.ot) + '원'], ['입력한 부서', `${t.n} / ${depts.length}`]])
