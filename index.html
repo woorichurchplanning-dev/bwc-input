@@ -3466,6 +3466,34 @@
         } else {
             offCtx = null;
         }
+        const offerParts = offeringPartsOf(deptItem);
+        if (offerParts.length) {
+            const mine0 = submissionStatus[selectedWeekKey]?.[`${selectedWeekKey}:${groupKey}:${deptName}`]?.data || {};
+            const nkey = `${selectedWeekKey}:${deptName}`;
+            if (!noOfferCtx || noOfferCtx.key !== nkey || !keep || !noOfferCtx.touched) {
+                const had = offerParts.filter(p => String(mine0[`${p.part} 헌금 없음`] ?? '').trim()).map(p => p.part);
+                const why = had.length ? String(mine0[`${had[0]} 헌금 없음`]).trim() : '';
+                noOfferCtx = { key: nkey, touched: false, had, on: !!why, why, warned: false };
+            }
+            fieldsHTML += `
+            <div class="form-card">
+                <div class="form-card-title">헌금 · 이번 주 헌금이 없었을 때</div>
+                <div class="ev-card" style="margin-top:0;padding-top:0;border-top:0">
+                    <div class="ev-tags">
+                        <button type="button" class="ev-tag${noOfferCtx.on ? ' on' : ''}" id="nooffer-toggle" onclick="toggleNoOffering(this)">헌금 없음</button>
+                    </div>
+                    <div class="ev-tags">
+                        <span class="loc-add-label" style="margin-right:4px">사유</span>
+                        ${NO_OFFERING_REASONS.map(r => `<button type="button" class="ev-tag" onclick="pickNoOfferingReason('${r}')">${r}</button>`).join('')}
+                    </div>
+                    <input type="text" id="nooffer-why" class="ev-memo" placeholder="헌금이 없었던 사유 (예: 수련회, 야외활동)"
+                           value="${noOfferCtx.why.replace(/"/g, '&quot;')}" oninput="noOfferCtx.why = this.value; noOfferCtx.touched = true">
+                    <div class="grid-hint">헌금 칸이 비어 있는 부(1부·2부)에 이 사유가 붙습니다. 사유 없이 헌금이 비어 있으면 마감 뒤 담당자에게 알림 메일이 갑니다.</div>
+                </div>
+            </div>`;
+        } else {
+            noOfferCtx = null;
+        }
         document.getElementById('form-fields-area').innerHTML = fieldsHTML;
         document.getElementById('form-previous-weeks-area').style.display = 'none';
 
@@ -3502,6 +3530,26 @@
         // 사유를 고르면 휴회도 켠다 (새벽기도는 쉰 날을 직접 고른다)
         const t = document.getElementById('off-toggle');
         if (t && !offCtx.on) { offCtx.on = true; t.classList.add('on'); }
+    }
+
+    /* 헌금 없음 — 주일학교. 출석은 있는데 헌금이 비어(0) 있는 부에 사유를 '1부 헌금 없음'·'2부 헌금 없음' 칸으로 남긴다.
+       부마다 따로 두는 이유: 사랑1부·사랑2부는 Apps Script 가 '사랑부' 하나로 합치는데, 한 칸이면 서로 덮어쓴다.
+       미입력 알림(Apps Script InputReminder.js)은 사유 없이 헌금이 빈 부를 담당자에게 알린다. */
+    const NO_OFFERING_REASONS = ['수련회', '야외활동', '연합예배'];
+    let noOfferCtx = null;   // { key, touched, on, why, had:[부], warned }
+    function offeringPartsOf(deptItem) {
+        return (deptItem?.fields || []).map(f => f.key.match(/^s(\d)_offering$/)).filter(Boolean)
+            .map(m => ({ part: `${m[1]}부`, offering: `s${m[1]}_offering`, people: [`s${m[1]}_student`, `s${m[1]}_teacher`] }));
+    }
+    function toggleNoOffering(btn) {
+        noOfferCtx.on = !noOfferCtx.on; noOfferCtx.touched = true;
+        btn.classList.toggle('on', noOfferCtx.on);
+    }
+    function pickNoOfferingReason(r) {
+        noOfferCtx.why = r; noOfferCtx.touched = true;
+        document.getElementById('nooffer-why').value = r;
+        const t = document.getElementById('nooffer-toggle');
+        if (t && !noOfferCtx.on) { noOfferCtx.on = true; t.classList.add('on'); }
     }
 
     function openSubmittedDept(groupKey, deptItem) {
@@ -3559,6 +3607,11 @@
             const offWhy = submission.data['휴회'];
             if (offWhy) html += `<div style="display:flex;justify-content:space-between;padding:var(--s2) 0">
                     <span>휴회</span><strong>${submission.data['휴회 요일'] ? submission.data['휴회 요일'] + ' · ' : ''}${offWhy}</strong></div>`;
+            ['1부', '2부'].forEach(p => {
+                const why = submission.data[`${p} 헌금 없음`];
+                if (why) html += `<div style="display:flex;justify-content:space-between;padding:var(--s2) 0">
+                    <span>${p} 헌금 없음</span><strong>${why}</strong></div>`;
+            });
             html += '</div>';
             doneDataArea.innerHTML = html;
         }
@@ -5099,6 +5152,30 @@
             }
         }
 
+        // 헌금 없음 — 출석이 있는데 헌금이 0인 부에만 사유를 붙인다. 휴회로 내면 따지지 않는다.
+        if (noOfferCtx && !(offFields && offFields['휴회'])) {
+            const parts = offeringPartsOf(deptItem);
+            const empty = parts.filter(p => p.people.some(k => (formData[k] || 0) > 0) && !(formData[p.offering] || 0));
+            const why = String(noOfferCtx.why || '').trim();
+            const extra = {};
+            parts.forEach(p => {
+                const v = noOfferCtx.on && empty.includes(p) ? (why || '헌금 없음') : '';
+                if (v || noOfferCtx.had.includes(p.part)) extra[`${p.part} 헌금 없음`] = v;   // 없던 칸을 빈 값으로 늘리지 않는다
+            });
+            if (Object.keys(extra).length) offFields = Object.assign(offFields || {}, extra);
+            // 사유 없이 헌금이 비어 있으면 한 번만 알려 준다. 나중에 넣을 거면 한 번 더 누르면 된다.
+            if (empty.length && !noOfferCtx.on && !noOfferCtx.warned && !allEmpty) {
+                noOfferCtx.warned = true;
+                document.getElementById('form-alert-area').innerHTML = `
+                    <div style="padding:var(--s3) var(--s4);background:var(--color-negative-bg);border:1px solid rgba(192,18,60,0.2);border-radius:var(--r);color:var(--color-negative);font-size:13px">
+                        ⚠️ ${empty.map(p => p.part).join('·')} 헌금이 비어 있습니다. 헌금이 없었다면 아래 <b>'헌금 없음'</b>을 누르고 사유를 적어 주세요.
+                        헌금은 나중에 넣으실 거라면 <b>제출하기</b>를 한 번 더 누르세요 (마감 뒤 알림 메일이 갑니다).
+                    </div>`;
+                document.getElementById('nooffer-toggle')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                return;
+            }
+        }
+
         // 모든 필드가 비어있을 때만 경고
         if (allEmpty) {
             const alertArea = document.getElementById('form-alert-area');
@@ -5194,6 +5271,10 @@
                         <span>${field.label}</span>
                         <strong>${formData[field.key]}</strong>
                     </div>`;
+                });
+                ['1부', '2부'].forEach(p => {
+                    if (formData[`${p} 헌금 없음`]) dataHtml += `<div style="display:flex;justify-content:space-between;padding:var(--s2) 0">
+                        <span>${p} 헌금 없음</span><strong>${formData[`${p} 헌금 없음`]}</strong></div>`;
                 });
                 dataHtml += '</div>';
                 doneDataArea.innerHTML = dataHtml;
